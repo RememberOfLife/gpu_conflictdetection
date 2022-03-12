@@ -34,6 +34,7 @@ project(gpu_conflictdetection LANGUAGES CXX CUDA)
 set(INCLUDES
     src
     .
+    deps
 )
 
 set(SOURCES
@@ -42,8 +43,15 @@ set(SOURCES
 
 add_executable(gpu_conflictdetection ${SOURCES})
 
+add_custom_target(
+    cub_fix 
+    sed -i "${CMAKE_CURRENT_LIST_DIR}/deps/cub/cub/iterator/tex_ref_input_iterator.cuh" -e "s|\\(^[^/]*\\)words\\[i\\] = tex1Dfetch(ref, (tex_offset \\* TEXTURE_MULTIPLE) + i);|\\1//words[i] = tex1Dfetch(ref, (tex_offset * TEXTURE_MULTIPLE) + i);|"
+    VERBATIM
+)
+
 set_property(TARGET gpu_conflictdetection PROPERTY CUDA_ARCHITECTURES 75 61)
 
 target_include_directories(gpu_conflictdetection PRIVATE ${INCLUDES})
 
 set_target_properties(gpu_conflictdetection PROPERTIES EXPORT_COMPILE_COMMANDS true)
+add_dependencies(gpu_conflictdetection cub_fix)
