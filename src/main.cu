@@ -208,3 +208,14 @@ R"(0 : 2 []
     );
     // clang-format on
 }
+
+TEST_CASE("conflictdetect_sort works on empty data", "[conflictdetect_sort]")
+{
+    ConflictdetectSortTestFixture<uint32_t, 0> f{};
+    uint32_t input[0] = {};
+    f.input2gpu(input);
+    conflictdetect_sort(
+        f.d_data, f.element_count, f.d_out_elements, f.d_out_indices);
+    f.output2cpu();
+    REQUIRE(f.output2string() == "");
+}
