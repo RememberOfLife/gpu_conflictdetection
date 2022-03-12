@@ -5,6 +5,7 @@
 #include "cuda_try.cuh"
 #include "data_generator.cuh"
 #include <cub/cub.cuh>
+#include <algorithm>
 
 struct index_iterator {
     size_t idx;
@@ -87,22 +88,56 @@ void conflictdetect_sort(
     *p_output_indices = output_indices;
 }
 
+template <typename T>
+void conflictdetect_sort_get_matrix_element(
+    T element,
+    size_t input_index,
+    size_t element_count,
+    T* element_list,
+    size_t* indices_list,
+    size_t** conflicts_start,
+    size_t** conflicts_end)
+{
+    T* l =
+        std::lower_bound(element_list, element_list + element_count, element);
+    T* r = std::upper_bound(l, element_list + element_count, element);
+    *conflicts_start = indices_list + (l - element_list);
+    *conflicts_end = std::lower_bound(
+        indices_list + (l - element_list), indices_list + (r - element_list),
+        input_index);
+}
+
 int main(int argc, char** argv)
 {
-    uint32_t element_count = 1 << 10;
-    uint32_t distinct_elements = 1 << 5;
-    uint32_t* h_data = (uint32_t*)malloc(sizeof(uint32_t) * element_count);
+    size_t element_count = 1 << 5;
+    size_t elements_size = sizeof(uint32_t) * element_count;
+    size_t indices_size = sizeof(size_t) * element_count;
+    size_t distinct_elements = 1 << 3;
+    uint32_t* h_data = (uint32_t*)malloc(elements_size);
     uint32_t* d_data = NULL;
-    CUDA_TRY(cudaMalloc(&d_data, sizeof(uint32_t) * element_count));
+    CUDA_TRY(cudaMalloc(&d_data, elements_size));
     gpu_generate_data<<<10, 32>>>(d_data, element_count, distinct_elements);
-    size_t* out_indices;
-    uint32_t* out_elements;
-    conflictdetect_sort(d_data, element_count, &out_elements, &out_indices);
+    size_t *d_out_indices, *h_out_indices;
+    uint32_t *d_out_elements, *h_out_elements;
+    conflictdetect_sort(d_data, element_count, &d_out_elements, &d_out_indices);
+    CUDA_TRY(cudaMemcpy(h_data, d_data, elements_size, cudaMemcpyDeviceToHost));
+
+    h_out_elements = (uint32_t*)malloc(elements_size);
+    h_out_indices = (size_t*)malloc(indices_size);
     CUDA_TRY(cudaMemcpy(
-        h_data, d_data, sizeof(uint32_t) * element_count,
-        cudaMemcpyDeviceToHost));
+        h_out_indices, d_out_indices, indices_size, cudaMemcpyDeviceToHost));
+    CUDA_TRY(cudaMemcpy(
+        h_out_elements, d_out_elements, elements_size, cudaMemcpyDeviceToHost));
     for (int i = 0; i < element_count; i++) {
-        printf("%d : %d\n", i, h_data[i]);
+        printf("%d : %d [", i, h_data[i]);
+        size_t *conflicts_start, *conflicts_end;
+        conflictdetect_sort_get_matrix_element(
+            h_data[i], i, element_count, h_out_elements, h_out_indices,
+            &conflicts_start, &conflicts_end);
+        for (size_t* i = conflicts_start; i != conflicts_end; i++) {
+            printf("%zu%s", *i, i + 1 == conflicts_end ? "" : ", ");
+        }
+        printf("]\n");
     }
     return 0;
 }
