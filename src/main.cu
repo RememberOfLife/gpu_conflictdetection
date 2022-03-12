@@ -7,52 +7,6 @@
 #include <cub/cub.cuh>
 #include <algorithm>
 
-struct index_iterator {
-    size_t idx;
-    size_t* storage;
-
-    __host__ __device__ index_iterator(size_t idx = 0, size_t* storage = NULL)
-        : idx(idx), storage(storage)
-    {
-    }
-
-    __host__ __device__ size_t operator[](size_t i)
-    {
-        return idx + i;
-    }
-
-    __host__ __device__ index_iterator operator+(size_t i)
-    {
-        return index_iterator{idx + i};
-    }
-
-    __host__ __device__ index_iterator operator-(size_t i)
-    {
-        return index_iterator{idx - i};
-    }
-
-    __host__ __device__ size_t& operator*()
-    {
-        return storage[idx];
-    }
-
-    __host__ __device__ size_t operator++()
-    {
-        idx++;
-        return idx;
-    }
-
-    __host__ __device__ size_t operator--()
-    {
-        idx--;
-        return idx;
-    }
-};
-
-template <> struct std::iterator_traits<index_iterator> {
-    typedef size_t value_type;
-};
-
 __global__ void kernel_gen_list(size_t* output, size_t element_count)
 {
     size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -70,20 +24,25 @@ void conflictdetect_sort(
     size_t cub_temp_size = 0;
     T* output_elements;
     size_t* input_indices;
-    size_t* output_indices;
     cub::DeviceRadixSort::SortPairs(
         NULL, cub_temp_size, input, output_elements, input_indices,
         output_indices, count);
     CUDA_TRY(cudaMalloc(&output_elements, count * sizeof(T)));
     CUDA_TRY(cudaMalloc(&input_indices, count * sizeof(size_t)));
-    CUDA_TRY(cudaMalloc(&output_indices, count * sizeof(size_t)));
     CUDA_TRY(cudaMalloc(&cub_temp, cub_temp_size));
+    // we rely on the observed, but apparently not documented behavior that
+    // cub::DeviceRadixSort::SortPairs can work in place
+    // (with d_values_in = d_values_out)
+    // to avoid this assumption, the uncommented malloc and free below have to
+    // be used
+    size_t* output_indices = input_indices;
+    // CUDA_TRY(cudaMalloc(&output_indices, count * sizeof(size_t)));
     kernel_gen_list<<<1024, 32>>>(input_indices, count);
     cub::DeviceRadixSort::SortPairs(
         cub_temp, cub_temp_size, input, output_elements, input_indices,
         output_indices, count);
     CUDA_TRY(cudaFree(cub_temp));
-    CUDA_TRY(cudaFree(input_indices));
+    // CUDA_TRY(cudaFree(input_indices));
     *p_output_elements = output_elements;
     *p_output_indices = output_indices;
 }
