@@ -67,7 +67,6 @@ set_target_properties(gpu_conflictdetection PROPERTIES EXPORT_COMPILE_COMMANDS t
 
 target_link_libraries(tests Catch2::Catch2)
 target_compile_definitions(gpu_conflictdetection PUBLIC CATCH_CONFIG_DISABLE)
-target_compile_definitions(tests PUBLIC CATCH_CONFIG_MAIN)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/deps/Catch2/extras")
 #include(CTest)
