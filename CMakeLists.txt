@@ -31,10 +31,16 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 project(gpu_conflictdetection LANGUAGES CXX CUDA)
 
+#list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/deps" ${CMAKE_MODULE_PATH})
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/deps/Catch2")
+
 set(INCLUDES
     src
     .
     deps
+    deps/Catch2/src/
+    deps/Catch2/single_include/
+    ${CMAKE_BINARY_DIR}/generated-includes/
 )
 
 set(SOURCES
@@ -42,16 +48,28 @@ set(SOURCES
 )
 
 add_executable(gpu_conflictdetection ${SOURCES})
-
+add_executable(tests ${SOURCES})
 add_custom_target(
     cub_fix 
     sed -i "${CMAKE_CURRENT_LIST_DIR}/deps/cub/cub/iterator/tex_ref_input_iterator.cuh" -e "s|\\(^[^/]*\\)words\\[i\\] = tex1Dfetch(ref, (tex_offset \\* TEXTURE_MULTIPLE) + i);|\\1//words[i] = tex1Dfetch(ref, (tex_offset * TEXTURE_MULTIPLE) + i);|"
     VERBATIM
 )
 
-set_property(TARGET gpu_conflictdetection PROPERTY CUDA_ARCHITECTURES 75 61)
+#add_dependencies(gpu_conflictdetection Catch2)
+add_dependencies(tests Catch2)
+
+set_property(TARGET gpu_conflictdetection tests PROPERTY CUDA_ARCHITECTURES 75 61)
 
 target_include_directories(gpu_conflictdetection PRIVATE ${INCLUDES})
+target_include_directories(tests PRIVATE ${INCLUDES})
 
 set_target_properties(gpu_conflictdetection PROPERTIES EXPORT_COMPILE_COMMANDS true)
-add_dependencies(gpu_conflictdetection cub_fix)
+
+target_link_libraries(tests Catch2::Catch2)
+target_compile_definitions(gpu_conflictdetection PUBLIC CATCH_CONFIG_DISABLE)
+target_compile_definitions(tests PUBLIC CATCH_CONFIG_MAIN)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/deps/Catch2/extras")
+#include(CTest)
+#include(Catch)
+#catch_discover_tests(foo)
