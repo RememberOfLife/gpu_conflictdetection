@@ -1,7 +1,7 @@
 # convenient cuda clang support was added in 3.19
 cmake_minimum_required(VERSION 3.19)
 option(USE_CLANG "use clang instead of nvcc" ON)
-option(TEST_TARGET "add a second binary target to run catch2 tests" OFF)
+option(BUILD_TESTS "add a second binary target to run catch2 tests" OFF)
 set(CLANG_VERSION "" CACHE STRING "specify clang version")
 
 if ("${CLANG_VERSION}" STREQUAL "")
@@ -60,7 +60,7 @@ target_compile_definitions(gpu_conflictdetection PUBLIC CATCH_CONFIG_DISABLE)
 set_target_properties(gpu_conflictdetection PROPERTIES EXPORT_COMPILE_COMMANDS true)
 
 
-if(TEST_TARGET)
+if(BUILD_TESTS)
     add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/deps/Catch2")
     add_executable(tests ${SOURCES})
 
