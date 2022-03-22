@@ -16,14 +16,17 @@ typedef unsigned long long cudaSize_t;
 
 typedef unsigned long long cudaUInt64_t;
 
-template <typename T> struct ht_type_map {
+template <typename T>
+struct ht_type_map {
 };
 
-template <> struct ht_type_map<uint64_t> {
+template <>
+struct ht_type_map<uint64_t> {
     using type = unsigned long long;
     static constexpr type EMPTY_ELEMENT = UINT64_MAX;
 };
-template <> struct ht_type_map<uint32_t> {
+template <>
+struct ht_type_map<uint32_t> {
     using type = unsigned int;
     static constexpr type EMPTY_ELEMENT = UINT32_MAX;
 };
@@ -33,12 +36,14 @@ struct ll_node {
     cudaSize_t next_node_llbi; // llbi = ll_buffer_index
 };
 
-template <typename T> struct ht_entry {
+template <typename T>
+struct ht_entry {
     T element;
     cudaSize_t occurence_list_llbi;
 };
 
-template <typename T> struct hashtable {
+template <typename T>
+struct hashtable {
     cudaSize_t* ll_buffer_pos;
     ll_node* ll_buffer;
     size_t capacity; // max entry count
@@ -60,29 +65,36 @@ static inline void hashtable_init_d(hashtable<T>* ht, size_t element_count)
     // right elem assigned
 }
 
-template <typename T> static inline void hashtable_fin_d(hashtable<T>* ht)
+template <typename T>
+static inline void hashtable_fin_d(hashtable<T>* ht)
 {
     CUDA_TRY(cudaFree(ht->ll_buffer_pos));
     CUDA_TRY(cudaFree(ht->ll_buffer));
     CUDA_TRY(cudaFree(ht->table));
 }
 
-template <typename T> static inline void hashtable_fin_h(hashtable<T>* ht)
+template <typename T>
+static inline void hashtable_fin_h(hashtable<T>* ht)
 {
     free(ht->ll_buffer);
     free(ht->table);
 }
 
-template <typename T> void hashtable_d2h(hashtable<T>* h_ht, hashtable<T>* d_ht)
+template <typename T>
+void hashtable_d2h(hashtable<T>* h_ht, hashtable<T>* d_ht)
 {
     *h_ht = *d_ht;
     h_ht->ll_buffer = (ll_node*)malloc(h_ht->element_count * sizeof(ll_node));
     h_ht->table = (ht_entry<T>*)malloc(h_ht->capacity * sizeof(ht_entry<T>));
     CUDA_TRY(cudaMemcpy(
-        h_ht->ll_buffer, d_ht->ll_buffer, h_ht->element_count * sizeof(ll_node),
+        h_ht->ll_buffer,
+        d_ht->ll_buffer,
+        h_ht->element_count * sizeof(ll_node),
         cudaMemcpyDeviceToHost));
     CUDA_TRY(cudaMemcpy(
-        h_ht->table, d_ht->table, h_ht->capacity * sizeof(ht_entry<T>),
+        h_ht->table,
+        d_ht->table,
+        h_ht->capacity * sizeof(ht_entry<T>),
         cudaMemcpyDeviceToHost));
 }
 
@@ -135,7 +147,8 @@ __device__ void hashtable_insert(hashtable<T>* ht, T element, uint64_t index)
             }
             if (hte->element == ht_type_map<T>::EMPTY_ELEMENT) {
                 T found = (T)atomicCAS(
-                    (T_CUDA*)&hte->element, ht_type_map<T>::EMPTY_ELEMENT,
+                    (T_CUDA*)&hte->element,
+                    ht_type_map<T>::EMPTY_ELEMENT,
                     (T_CUDA)element);
                 if (found == ht_type_map<T>::EMPTY_ELEMENT ||
                     found == element) {
@@ -159,7 +172,8 @@ __device__ void hashtable_insert(hashtable<T>* ht, T element, uint64_t index)
     cudaSize_t new_ll_node_llbi = (cudaSize_t)(new_ll_node - ht->ll_buffer);
     while (true) {
         cudaSize_t found = (cudaSize_t)atomicCAS(
-            (cudaSize_t*)eol, (cudaSize_t)new_ll_node->next_node_llbi,
+            (cudaSize_t*)eol,
+            (cudaSize_t)new_ll_node->next_node_llbi,
             new_ll_node_llbi);
         if (found == new_ll_node->next_node_llbi) {
             break; // success
@@ -169,19 +183,18 @@ __device__ void hashtable_insert(hashtable<T>* ht, T element, uint64_t index)
 }
 
 template <typename T>
-__global__ void kernel_fill_ht(T* input, hashtable<T> ht, size_t element_count)
+__global__ void kernel_fill_ht(T* input, hashtable<T> ht)
 {
     size_t stride = blockDim.x * gridDim.x;
     size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
-    for (size_t i = tid; i < element_count; i += stride) {
+    for (size_t i = tid; i < ht.element_count; i += stride) {
         hashtable_insert(&ht, input[i], i);
     }
 }
 
 template <typename T>
-void conflictdetect_hashtable(
-    T* d_input, size_t element_count, hashtable<T>* ht)
+void conflictdetect_hashtable(T* d_input, hashtable<T>* ht)
 {
     CUDA_TRY(cudaMemset(ht->ll_buffer_pos, 0, sizeof(cudaSize_t)));
-    kernel_fill_ht<<<1, 1>>>(d_input, *ht, element_count);
+    kernel_fill_ht<<<1024, 256>>>(d_input, *ht);
 }

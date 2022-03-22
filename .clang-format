@@ -20,3 +20,4 @@ PenaltyReturnTypeOnItsOwnLine: 100
 IndentCaseLabels: true
 AlignTrailingComments: false
 AlwaysBreakTemplateDeclarations: true
+BinPackArguments: false

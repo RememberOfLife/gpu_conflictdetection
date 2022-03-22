@@ -48,7 +48,7 @@
         CUDA_TRY(cudaEventCreate((&_cuda_time_print_start)));                  \
         CUDA_TRY(cudaEventCreate((&_cuda_time_print_stop)));                   \
                                                                                \
-        CUDA_TRY(cudaEventRecord((&_cuda_time_print_start)));                  \
+        CUDA_TRY(cudaEventRecord((_cuda_time_print_start)));                   \
         {                                                                      \
             __VA_ARGS__;                                                       \
         }                                                                      \
@@ -56,9 +56,11 @@
                                                                                \
         CUDA_TRY(cudaEventSynchronize((_cuda_time_print_stop)));               \
         CUDA_TRY(cudaEventElapsedTime(                                         \
-            (&_cuda_time_print_elapsed_time), (_cuda_time_print_start),        \
+            (&_cuda_time_print_elapsed_time),                                  \
+            (_cuda_time_print_start),                                          \
             (_cuda_time_print_stop)));                                         \
         CUDA_TRY(cudaEventDestroy((_cuda_time_print_start)));                  \
         CUDA_TRY(cudaEventDestroy((_cuda_time_print_stop)));                   \
-        printf(fmt_str, time);                                                 \
+        printf(fmt_str, _cuda_time_print_elapsed_time);                        \
+        fflush(stdout);                                                        \
     } while (0)

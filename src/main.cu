@@ -6,6 +6,7 @@
 #include <cstdlib>
 
 #include "cuda_try.cuh"
+#include "cuda_time.cuh"
 #include "data_generator.cuh"
 #include "conflictdetect_sort.cuh"
 #include "conflictdetect_hashtable.cuh"
@@ -38,6 +39,7 @@ void input_data_print_from_sort(
         }
         ss << "]\n";
     }
+    sort_buffers_fin_h(&h_sb);
 }
 
 template <typename T>
@@ -96,7 +98,9 @@ void input_data_init_filled(
     gpu_generate_data<<<10, 32>>>(
         in_data->d_input, element_count, distinct_elements);
     CUDA_TRY(cudaMemcpy(
-        in_data->h_input, in_data->d_input, sizeof(T) * element_count,
+        in_data->h_input,
+        in_data->d_input,
+        sizeof(T) * element_count,
         cudaMemcpyDeviceToHost));
 }
 
@@ -105,7 +109,9 @@ void input_data_fill(input_data<T>* in_data, T* input)
 {
     memcpy(in_data->h_input, input, in_data->element_count * sizeof(T));
     cudaMemcpy(
-        in_data->d_input, in_data->h_input, in_data->element_count * sizeof(T),
+        in_data->d_input,
+        in_data->h_input,
+        in_data->element_count * sizeof(T),
         cudaMemcpyHostToDevice);
 }
 
@@ -127,7 +133,9 @@ void test_sort(input_data<T>* in_data)
     CUDA_TRY(
         cudaMalloc(&d_out_indices, in_data->element_count * sizeof(size_t)));
     conflictdetect_sort(
-        in_data->d_input, in_data->element_count, d_out_elements,
+        in_data->d_input,
+        in_data->element_count,
+        d_out_elements,
         d_out_indices);
     h_out_elements = (T*)malloc(elements_size);
     h_out_indices = (size_t*)malloc(indices_size);
@@ -157,9 +165,21 @@ template <typename T>
 void benchmark()
 {
     input_data<T> in_data;
-    input_data_init_filled(&in_data, 1 << 29, 1 << 28);
+    input_data_init_filled(&in_data, 1 << 27, 1 << 26);
+
+    sort_buffers<T> d_sb;
+    sort_buffers_init_d(&d_sb, in_data.element_count);
+
+    CUDA_TIME_PRINT(
+        "sort: %f ms\n", conflictdetect_sort(in_data.d_input, &d_sb));
+    sort_buffers_fin_d(&d_sb);
+
     hashtable<T> d_ht;
     hashtable_init_d(&d_ht, in_data.element_count);
+
+    CUDA_TIME_PRINT(
+        "hashtable: %f ms\n", conflictdetect_hashtable(in_data.d_input, &d_ht));
+
     hashtable_fin_d(&d_ht);
 }
 #ifdef CATCH_CONFIG_DISABLE
@@ -182,13 +202,13 @@ TEST_CASE("conflictdetect_sort basic functionality", "[conflictdetect_sort]")
     input_data_init_empty(&in_data, 10);
     input_data_fill(&in_data, input);
 
-    sort_buffers<uint32_t> sb;
-    sort_buffers_init_d(&sb, in_data.element_count);
+    sort_buffers<uint32_t> d_sb;
+    sort_buffers_init_d(&d_sb, in_data.element_count);
 
-    conflictdetect_sort(in_data.d_input, &sb);
+    conflictdetect_sort(in_data.d_input, &d_sb);
 
     std::ostringstream ss;
-    input_data_print_from_sort(&in_data, ss, &sb);
+    input_data_print_from_sort(&in_data, ss, &d_sb);
     // clang-format off
     REQUIRE(
         ss.str() == (
@@ -206,6 +226,9 @@ R"(0 : 2 []
         )
     );
     // clang-format on
+
+    input_data_fin(&in_data);
+    sort_buffers_fin_d(&d_sb);
 }
 
 TEST_CASE(
@@ -217,14 +240,17 @@ TEST_CASE(
     input_data_init_empty(&in_data, 0);
     input_data_fill(&in_data, input);
 
-    sort_buffers<uint32_t> sb;
-    sort_buffers_init_d(&sb, in_data.element_count);
+    sort_buffers<uint32_t> d_sb;
+    sort_buffers_init_d(&d_sb, in_data.element_count);
 
-    conflictdetect_sort(in_data.d_input, &sb);
+    conflictdetect_sort(in_data.d_input, &d_sb);
 
     std::ostringstream ss;
-    input_data_print_from_sort(&in_data, ss, &sb);
+    input_data_print_from_sort(&in_data, ss, &d_sb);
     REQUIRE(ss.str() == "");
+
+    input_data_fin(&in_data);
+    sort_buffers_fin_d(&d_sb);
 }
 
 TEST_CASE(
@@ -239,7 +265,7 @@ TEST_CASE(
     hashtable<uint32_t> d_ht;
     hashtable_init_d(&d_ht, in_data.element_count);
 
-    conflictdetect_hashtable(in_data.d_input, in_data.element_count, &d_ht);
+    conflictdetect_hashtable(in_data.d_input, &d_ht);
 
     std::ostringstream ss;
     input_data_print_from_hashtable(&in_data, ss, &d_ht);
@@ -274,7 +300,7 @@ TEST_CASE(
     hashtable<uint32_t> d_ht;
     hashtable_init_d(&d_ht, in_data.element_count);
 
-    conflictdetect_hashtable(in_data.d_input, in_data.element_count, &d_ht);
+    conflictdetect_hashtable(in_data.d_input, &d_ht);
 
     std::ostringstream ss;
     input_data_print_from_hashtable(&in_data, ss, &d_ht);
