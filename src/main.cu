@@ -162,30 +162,33 @@ void test_hashtable(input_data<T>* in_data)
 }
 
 template <typename T>
-void benchmark()
+void benchmark(const char* context)
 {
     input_data<T> in_data;
     input_data_init_filled(&in_data, 1 << 27, 1 << 26);
 
     sort_buffers<T> d_sb;
     sort_buffers_init_d(&d_sb, in_data.element_count);
-
+    fputs(context, stdout);
     CUDA_TIME_PRINT(
-        "sort: %f ms\n", conflictdetect_sort(in_data.d_input, &d_sb));
+        " sort: %f ms\n", conflictdetect_sort(in_data.d_input, &d_sb));
     sort_buffers_fin_d(&d_sb);
 
     hashtable<T> d_ht;
     hashtable_init_d(&d_ht, in_data.element_count);
 
+    fputs(context, stdout);
     CUDA_TIME_PRINT(
-        "hashtable: %f ms\n", conflictdetect_hashtable(in_data.d_input, &d_ht));
+        " hashtable: %f ms\n",
+        conflictdetect_hashtable(in_data.d_input, &d_ht));
 
     hashtable_fin_d(&d_ht);
 }
 #ifdef CATCH_CONFIG_DISABLE
 int main(int argc, char** argv)
 {
-    benchmark<uint32_t>();
+    benchmark<uint32_t>("uint32");
+    benchmark<uint64_t>("uint64");
     return 0;
 }
 #else
