@@ -6,6 +6,8 @@
 #include "cuda_try.cuh"
 #include "utils.cuh"
 // macro for timing gpu operations
+// sadly, you can't use code blocks as the arguments for these
+// i don't know why, and i don't want to know why
 
 #define CUDA_TIME_FORCE_ENABLED(ce_start, ce_stop, stream, time, ...)          \
     do {                                                                       \
@@ -38,3 +40,25 @@
     CUDA_TIME_FORCE_ENABLED(ce_start, ce_stop, stream, time, __VA_ARGS__)
 
 #endif
+
+#define CUDA_TIME_PRINT(fmt_str, ...)                                          \
+    do {                                                                       \
+        cudaEvent_t _cuda_time_print_start, _cuda_time_print_stop;             \
+        float _cuda_time_print_elapsed_time;                                   \
+        CUDA_TRY(cudaEventCreate((&_cuda_time_print_start)));                  \
+        CUDA_TRY(cudaEventCreate((&_cuda_time_print_stop)));                   \
+                                                                               \
+        CUDA_TRY(cudaEventRecord((&_cuda_time_print_start)));                  \
+        {                                                                      \
+            __VA_ARGS__;                                                       \
+        }                                                                      \
+        CUDA_TRY(cudaEventRecord((_cuda_time_print_stop)));                    \
+                                                                               \
+        CUDA_TRY(cudaEventSynchronize((_cuda_time_print_stop)));               \
+        CUDA_TRY(cudaEventElapsedTime(                                         \
+            (&_cuda_time_print_elapsed_time), (_cuda_time_print_start),        \
+            (_cuda_time_print_stop)));                                         \
+        CUDA_TRY(cudaEventDestroy((_cuda_time_print_start)));                  \
+        CUDA_TRY(cudaEventDestroy((_cuda_time_print_stop)));                   \
+        printf(fmt_str, time);                                                 \
+    } while (0)
