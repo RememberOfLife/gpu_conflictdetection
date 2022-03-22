@@ -142,14 +142,16 @@ __device__ void hashtable_insert(hashtable<T>* ht, T element, uint64_t index)
     }
     // finally append to linked list
     new_ll_node->idx = index;
+    new_ll_node->next_node_llbi = *eol;
+    cudaSize_t new_ll_node_llbi = (cudaSize_t)(new_ll_node - ht->ll_buffer);
     while (true) {
-        new_ll_node->next_node_llbi = *eol;
         cudaSize_t found = (cudaSize_t)atomicCAS(
             (cudaSize_t*)eol, (cudaSize_t)new_ll_node->next_node_llbi,
-            (cudaSize_t)new_ll_node);
+            new_ll_node_llbi);
         if (found == new_ll_node->next_node_llbi) {
             break; // success
         }
+        new_ll_node->next_node_llbi = found;
     }
 }
 
