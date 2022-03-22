@@ -101,7 +101,6 @@ void hashtable_d2h(hashtable<T>* h_ht, hashtable<T>* d_ht)
 template <typename T>
 ht_entry<T>* hashtable_get_entry(hashtable<T>* ht, T element)
 {
-    cudaSize_t* eol;
     if (element == ht_type_map<T>::EMPTY_ELEMENT) {
         // insert into special list
         return &ht->table[0];
