@@ -18,8 +18,9 @@ void cpu_generate_data(
     }
 }
 
+template <typename T>
 __global__ void gpu_generate_data(
-    uint32_t* d_buffer,
+    T* d_buffer,
     uint64_t element_count,
     uint64_t distinct_elements,
     uint64_t seed = 42)
@@ -28,6 +29,7 @@ __global__ void gpu_generate_data(
     uint64_t gridstride = blockDim.x * gridDim.x;
     fast_prng rng(seed + tid);
     for (uint64_t i = tid; i < element_count; i += gridstride) {
-        d_buffer[i] = rng.rand() % distinct_elements;
+        d_buffer[i] =
+            (((uint64_t)rng.rand() << 32) | rng.rand()) % distinct_elements;
     }
 }

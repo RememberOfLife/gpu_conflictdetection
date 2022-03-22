@@ -1,106 +1,154 @@
 #include <cstdint>
 #include <memory>
 #include <stdio.h>
+#include <string>
+#include <sstream>
+#include <cstdlib>
 
 #include "cuda_try.cuh"
 #include "data_generator.cuh"
-#include <cub/cub.cuh>
-#include <algorithm>
-#include <string>
-#include <sstream>
+#include "conflictdetect_sort.cuh"
+#include "conflictdetect_hashtable.cuh"
 
-__global__ void kernel_gen_list(size_t* output, size_t element_count)
+template <typename T> struct input_data {
+    size_t element_count;
+    T* h_input;
+    T* d_input;
+};
+
+template <typename T>
+void input_data_print_from_sort(
+    input_data<T>* in_data,
+    std::ostream& ss,
+    T* h_out_elements,
+    size_t* h_out_indices)
 {
-    size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
-    size_t gridstride = blockDim.x * gridDim.x;
-    for (size_t i = tid; i < element_count; i += gridstride) {
-        output[i] = i;
+    for (int i = 0; i < in_data->element_count; i++) {
+        ss << i;
+        ss << " : ";
+        ss << in_data->h_input[i];
+        ss << " [";
+        size_t *conflicts_start, *conflicts_end;
+        conflictdetect_sort_get_matrix_element(
+            in_data->h_input[i], i, in_data->element_count, h_out_elements,
+            h_out_indices, &conflicts_start, &conflicts_end);
+
+        for (size_t* i = conflicts_start; i != conflicts_end; i++) {
+            ss << *i;
+            if (i + 1 != conflicts_end) ss << ", ";
+        }
+        ss << "]\n";
     }
 }
 
 template <typename T>
-void conflictdetect_sort(
-    T* input, size_t count, T* output_elements, size_t* output_indices)
+void input_data_print_from_hashtable(
+    input_data<T>* in_data, std::ostream& ss, hashtable<T>* d_ht)
 {
-    void* cub_temp;
-    size_t cub_temp_size = 0;
-    size_t* input_indices;
-    cub::DeviceRadixSort::SortPairs(
-        NULL, cub_temp_size, input, output_elements, input_indices,
-        output_indices, count);
-    CUDA_TRY(cudaMalloc(&cub_temp, cub_temp_size));
-    // we rely on the observed, but apparently not documented behavior that
-    // cub::DeviceRadixSort::SortPairs can work in place
-    // (with d_values_in = d_values_out)
-    // to avoid this assumption, the uncommented malloc and free below have to
-    // be used
-    input_indices = output_indices;
-    // CUDA_TRY(cudaMalloc(&input_indices, count * sizeof(size_t)));
-    kernel_gen_list<<<1024, 32>>>(input_indices, count);
-    cub::DeviceRadixSort::SortPairs(
-        cub_temp, cub_temp_size, input, output_elements, input_indices,
-        output_indices, count);
-    CUDA_TRY(cudaFree(cub_temp));
-    // CUDA_TRY(cudaFree(input_indices));
+    hashtable<T> h_ht;
+    hashtable_d2h(d_ht, &h_ht);
+
+    std::vector<size_t> indices{};
+
+    for (int i = 0; i < in_data->element_count; i++) {
+        ss << i;
+        ss << " : ";
+        ss << in_data->h_input[i];
+        ss << " [";
+
+        ht_entry<T>* hte = hashtable_get_entry(&h_ht, in_data->h_input[i]);
+        cudaSize_t llbi = hte->occurence_list_llbi;
+        indices.clear();
+        while (true) {
+            indices.push_back(h_ht.ll_buffer[llbi].idx);
+            llbi = h_ht.ll_buffer[llbi].next_node_llbi;
+            if (llbi == HT_LL_BUFFER_SENTINEL) {
+                break;
+            }
+        }
+        std::sort(indices.begin(), indices.end());
+        auto last = std::lower_bound(indices.begin(), indices.end(), i);
+        for (auto i = indices.begin(); i != last; i++) {
+            ss << *i;
+            if (i + 1 != last) ss << ", ";
+        }
+
+        ss << "]\n";
+    }
+
+    hashtable_fin_h(&h_ht);
 }
 
 template <typename T>
-void conflictdetect_sort_get_matrix_element(
-    T element,
-    size_t input_index,
-    size_t element_count,
-    T* element_list,
-    size_t* indices_list,
-    size_t** conflicts_start,
-    size_t** conflicts_end)
+void input_data_init_empty(input_data<T>* in_data, size_t element_count)
 {
-    T* l =
-        std::lower_bound(element_list, element_list + element_count, element);
-    T* r = std::upper_bound(l, element_list + element_count, element);
-    *conflicts_start = indices_list + (l - element_list);
-    *conflicts_end = std::lower_bound(
-        indices_list + (l - element_list), indices_list + (r - element_list),
-        input_index);
+    in_data->element_count = element_count;
+    size_t elements_size = sizeof(T) * element_count;
+    in_data->h_input = (T*)malloc(elements_size);
+    CUDA_TRY(cudaMalloc(&in_data->d_input, elements_size));
 }
-void test_sort()
-{
-    size_t element_count = 1 << 5;
-    size_t elements_size = sizeof(uint32_t) * element_count;
-    size_t indices_size = sizeof(size_t) * element_count;
-    size_t distinct_elements = 1 << 3;
-    uint32_t* h_data = (uint32_t*)malloc(elements_size);
-    uint32_t* d_data = NULL;
-    CUDA_TRY(cudaMalloc(&d_data, elements_size));
-    gpu_generate_data<<<10, 32>>>(d_data, element_count, distinct_elements);
-    size_t *d_out_indices, *h_out_indices;
-    uint32_t *d_out_elements, *h_out_elements;
-    CUDA_TRY(cudaMalloc(&d_out_elements, elements_size));
-    CUDA_TRY(cudaMalloc(&d_out_indices, indices_size));
-    conflictdetect_sort(d_data, element_count, d_out_elements, d_out_indices);
-    CUDA_TRY(cudaMemcpy(h_data, d_data, elements_size, cudaMemcpyDeviceToHost));
 
-    h_out_elements = (uint32_t*)malloc(elements_size);
+template <typename T>
+void input_data_init_filled(
+    input_data<T>* in_data, size_t element_count, size_t distinct_elements)
+{
+    input_data_init_empty(in_data, element_count);
+    gpu_generate_data<<<10, 32>>>(
+        in_data->d_input, element_count, distinct_elements);
+    CUDA_TRY(cudaMemcpy(
+        in_data->h_input, in_data->d_input, sizeof(T) * element_count,
+        cudaMemcpyDeviceToHost));
+}
+
+template <typename T> void input_data_fin(input_data<T>* in_data)
+{
+    free(in_data->h_input);
+    CUDA_TRY(cudaFree(in_data->d_input));
+}
+
+template <typename T> void test_sort(input_data<T>* in_data)
+{
+    size_t elements_size = sizeof(T) * in_data->element_count;
+    size_t indices_size = sizeof(size_t) * in_data->element_count;
+    size_t *d_out_indices, *h_out_indices;
+    T *d_out_elements, *h_out_elements;
+    CUDA_TRY(cudaMalloc(&d_out_elements, in_data->element_count * sizeof(T)));
+    CUDA_TRY(
+        cudaMalloc(&d_out_indices, in_data->element_count * sizeof(size_t)));
+    conflictdetect_sort(
+        in_data->d_input, in_data->element_count, d_out_elements,
+        d_out_indices);
+    h_out_elements = (T*)malloc(elements_size);
     h_out_indices = (size_t*)malloc(indices_size);
     CUDA_TRY(cudaMemcpy(
         h_out_indices, d_out_indices, indices_size, cudaMemcpyDeviceToHost));
     CUDA_TRY(cudaMemcpy(
         h_out_elements, d_out_elements, elements_size, cudaMemcpyDeviceToHost));
-    for (int i = 0; i < element_count; i++) {
-        printf("%d : %d [", i, h_data[i]);
-        size_t *conflicts_start, *conflicts_end;
-        conflictdetect_sort_get_matrix_element(
-            h_data[i], i, element_count, h_out_elements, h_out_indices,
-            &conflicts_start, &conflicts_end);
-        for (size_t* i = conflicts_start; i != conflicts_end; i++) {
-            printf("%zu%s", *i, i + 1 == conflicts_end ? "" : ", ");
-        }
-        printf("]\n");
-    }
+    input_data_print_from_sort(
+        in_data, std::cout, h_out_elements, h_out_indices);
+    CUDA_TRY(cudaFree(d_out_elements));
+    CUDA_TRY(cudaFree(d_out_indices));
+    free(h_out_elements);
+    free(h_out_indices);
 }
+
+template <typename T> void test_hashtable(input_data<T>* in_data)
+{
+    hashtable<uint64_t> ht;
+    hashtable_init_d(&ht, in_data->element_count);
+    conflictdetect_hashtable(in_data->d_input, in_data->element_count, &ht);
+    CUDA_TRY(cudaDeviceSynchronize());
+    printf("DONE\n");
+    input_data_print_from_hashtable(in_data, std::cout, &ht);
+    hashtable_fin_d(&ht);
+}
+
 #ifdef CATCH_CONFIG_DISABLE
 int main(int argc, char** argv)
 {
-    test_sort();
+    input_data<uint64_t> in_data;
+    input_data_init_filled(&in_data, 17, 4);
+    test_hashtable(&in_data);
     return 0;
 }
 #else
@@ -109,86 +157,69 @@ int main(int argc, char** argv)
 
 #include <catch2/catch.hpp>
 
-template <typename T, size_t ELEMENT_COUNT>
-class ConflictdetectSortTestFixture {
+template <typename T> class ConflictdetectSortTestFixture {
   public:
-    T* h_data;
-    T* d_data;
+    input_data<T> in_data;
     T* h_out_elements;
     T* d_out_elements;
     size_t* h_out_indices;
     size_t* d_out_indices;
-    size_t element_count;
 
   public:
-    ConflictdetectSortTestFixture()
+    ConflictdetectSortTestFixture(size_t element_count)
     {
-        element_count = ELEMENT_COUNT;
-        CUDA_TRY(cudaMalloc(&d_data, ELEMENT_COUNT * sizeof(T)));
-        CUDA_TRY(cudaMalloc(&d_out_elements, ELEMENT_COUNT * sizeof(T)));
-        CUDA_TRY(cudaMalloc(&d_out_indices, ELEMENT_COUNT * sizeof(size_t)));
-        h_data = (T*)malloc(ELEMENT_COUNT * sizeof(T));
-        h_out_elements = (T*)malloc(ELEMENT_COUNT * sizeof(T));
-        h_out_indices = (size_t*)malloc(ELEMENT_COUNT * sizeof(size_t));
+        input_data_init_empty(&in_data, element_count);
+        CUDA_TRY(
+            cudaMalloc(&d_out_elements, in_data.element_count * sizeof(T)));
+        CUDA_TRY(
+            cudaMalloc(&d_out_indices, in_data.element_count * sizeof(size_t)));
+        h_out_elements = (T*)malloc(in_data.element_count * sizeof(T));
+        h_out_indices = (size_t*)malloc(in_data.element_count * sizeof(size_t));
     }
 
     ~ConflictdetectSortTestFixture()
     {
-        CUDA_TRY(cudaFree(d_data));
         CUDA_TRY(cudaFree(d_out_elements));
         CUDA_TRY(cudaFree(d_out_indices));
-        free(h_data);
         free(h_out_elements);
         free(h_out_indices);
+        input_data_fin(&in_data);
     }
 
     void input2gpu(T* input)
     {
-        memcpy(h_data, input, ELEMENT_COUNT * sizeof(T));
+        memcpy(in_data.h_input, input, in_data.element_count * sizeof(T));
         CUDA_TRY(cudaMemcpy(
-            d_data, h_data, ELEMENT_COUNT * sizeof(T), cudaMemcpyHostToDevice));
+            in_data.d_input, in_data.h_input, in_data.element_count * sizeof(T),
+            cudaMemcpyHostToDevice));
     }
 
     void output2cpu()
     {
         CUDA_TRY(cudaMemcpy(
-            h_out_indices, d_out_indices, element_count * sizeof(size_t),
-            cudaMemcpyDeviceToHost));
+            h_out_indices, d_out_indices,
+            in_data.element_count * sizeof(size_t), cudaMemcpyDeviceToHost));
         CUDA_TRY(cudaMemcpy(
-            h_out_elements, d_out_elements, element_count * sizeof(T),
+            h_out_elements, d_out_elements, in_data.element_count * sizeof(T),
             cudaMemcpyDeviceToHost));
     }
 
     std::string output2string()
     {
         std::ostringstream ss{};
-        for (int i = 0; i < element_count; i++) {
-            ss << i;
-            ss << " : ";
-            ss << h_data[i];
-            ss << " [";
-            size_t *conflicts_start, *conflicts_end;
-            conflictdetect_sort_get_matrix_element(
-                h_data[i], i, element_count, h_out_elements, h_out_indices,
-                &conflicts_start, &conflicts_end);
-
-            for (size_t* i = conflicts_start; i != conflicts_end; i++) {
-                ss << *i;
-                if (i + 1 != conflicts_end) ss << ", ";
-            }
-            ss << "]\n";
-        }
+        input_data_print_from_sort(&in_data, ss, h_out_elements, h_out_indices);
         return ss.str();
     }
 };
 
 TEST_CASE("conflictdetect_sort basic functionality", "[conflictdetect_sort]")
 {
-    ConflictdetectSortTestFixture<uint32_t, 10> f{};
+    ConflictdetectSortTestFixture<uint32_t> f{10};
     uint32_t input[10] = {2, 1, 1, 1, 2, 2, 3, 7, 4, 0};
     f.input2gpu(input);
     conflictdetect_sort(
-        f.d_data, f.element_count, f.d_out_elements, f.d_out_indices);
+        f.in_data.d_input, f.in_data.element_count, f.d_out_elements,
+        f.d_out_indices);
     f.output2cpu();
     // clang-format off
     REQUIRE(
@@ -211,11 +242,12 @@ R"(0 : 2 []
 
 TEST_CASE("conflictdetect_sort works on empty data", "[conflictdetect_sort]")
 {
-    ConflictdetectSortTestFixture<uint32_t, 0> f{};
+    ConflictdetectSortTestFixture<uint32_t> f{0};
     uint32_t input[0] = {};
     f.input2gpu(input);
     conflictdetect_sort(
-        f.d_data, f.element_count, f.d_out_elements, f.d_out_indices);
+        f.in_data.d_input, f.in_data.element_count, f.d_out_elements,
+        f.d_out_indices);
     f.output2cpu();
     REQUIRE(f.output2string() == "");
 }
