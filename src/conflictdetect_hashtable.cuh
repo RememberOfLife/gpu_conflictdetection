@@ -44,7 +44,6 @@ struct ht_entry {
 
 template <typename T>
 struct hashtable {
-    cudaSize_t* ll_buffer_pos;
     ll_node* ll_buffer;
     size_t capacity; // max entry count
     ht_entry<T>* table;
@@ -58,9 +57,7 @@ static inline void hashtable_init_d(hashtable<T>* ht, size_t element_count)
     CUDA_TRY(cudaMalloc(&ht->table, sizeof(ht_entry<T>) * ht->capacity));
     CUDA_TRY(cudaMemset(ht->table, 0xFF, sizeof(ht_entry<T>) * ht->capacity));
     CUDA_TRY(cudaMalloc(&ht->ll_buffer, element_count * sizeof(ll_node)));
-    ht->ll_buffer_pos = 0;
     ht->element_count = element_count;
-    CUDA_TRY(cudaMalloc(&ht->ll_buffer_pos, sizeof(cudaSize_t)));
     // ht->table[0] for the ht_type_map<T>::EMPTY_ELEMENT automatically gets its
     // right elem assigned
 }
@@ -68,7 +65,6 @@ static inline void hashtable_init_d(hashtable<T>* ht, size_t element_count)
 template <typename T>
 static inline void hashtable_fin_d(hashtable<T>* ht)
 {
-    CUDA_TRY(cudaFree(ht->ll_buffer_pos));
     CUDA_TRY(cudaFree(ht->ll_buffer));
     CUDA_TRY(cudaFree(ht->table));
 }
@@ -127,11 +123,12 @@ ht_entry<T>* hashtable_get_entry(hashtable<T>* ht, T element)
 }
 
 template <typename T>
-__device__ void hashtable_insert(hashtable<T>* ht, T element, uint64_t index)
+__device__ void hashtable_insert(hashtable<T>* ht, T element, size_t index)
 {
+    ll_node* new_ll_node = &ht->ll_buffer[index];
     typedef typename ht_type_map<T>::type T_CUDA;
-    ll_node* new_ll_node = &ht->ll_buffer[atomicAdd(ht->ll_buffer_pos, 1)];
     cudaSize_t* eol;
+
     if (element == ht_type_map<T>::EMPTY_ELEMENT) {
         // insert into special list
         eol = &ht->table[0].occurence_list_llbi;
@@ -194,6 +191,5 @@ __global__ void kernel_fill_ht(T* input, hashtable<T> ht)
 template <typename T>
 void conflictdetect_hashtable(T* d_input, hashtable<T>* ht)
 {
-    CUDA_TRY(cudaMemset(ht->ll_buffer_pos, 0, sizeof(cudaSize_t)));
     kernel_fill_ht<<<1024, 256>>>(d_input, *ht);
 }
